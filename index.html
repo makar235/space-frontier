@@ -178,20 +178,16 @@ class Obstacle {
     draw() {
         ctx.save();
         if (this.type === 3) {
-            // ДАРТ ВЕЙДЕР (Возвращены оригинальные детали корпуса и КРАСНЫЙ МЕЧ)
             ctx.fillStyle = '#15161c';
             ctx.beginPath(); ctx.moveTo(this.x - 22, this.y + 16); ctx.lineTo(this.x + 22, this.y + 16); ctx.lineTo(this.x + 14, this.y - 4); ctx.lineTo(this.x - 14, this.y - 4); ctx.closePath(); ctx.fill();
             ctx.fillStyle = '#252831'; ctx.beginPath(); ctx.arc(this.x, this.y - 2, 14, Math.PI, 0); ctx.fill();
             ctx.fillStyle = '#0d0e12'; ctx.beginPath(); ctx.moveTo(this.x, this.y + 2); ctx.lineTo(this.x - 5, this.y + 12); ctx.lineTo(this.x + 5, this.y + 12); ctx.closePath(); ctx.fill();
             ctx.fillStyle = '#ff3333'; ctx.fillRect(this.x - 7, this.y, 4, 2); ctx.fillRect(this.x + 3, this.y, 4, 2);
-            // Тот самый красный меч:
             ctx.strokeStyle = '#ff0000'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(this.x + 24, this.y + 10); ctx.lineTo(this.x + 24, this.y - 12); ctx.stroke();
         } else if (this.type === 0) {
-            // ШТУРМОВИК (Возвращены черные глаза и детали маски)
             ctx.fillStyle = '#f0f0f5';
             ctx.beginPath(); ctx.arc(this.x, this.y, 14, 0, Math.PI * 2); ctx.fill(); ctx.fillRect(this.x - 14, this.y, 28, 12);
             ctx.fillStyle = '#1c1d22'; 
-            // Рисуем глаза маски штурмовика:
             ctx.beginPath(); ctx.moveTo(this.x - 9, this.y - 2); ctx.lineTo(this.x - 2, this.y + 1); ctx.lineTo(this.x - 4, this.y + 4); ctx.closePath(); ctx.fill();
             ctx.beginPath(); ctx.moveTo(this.x + 9, this.y - 2); ctx.lineTo(this.x + 2, this.y + 1); ctx.lineTo(this.x + 4, this.y + 4); ctx.closePath(); ctx.fill(); 
             ctx.fillRect(this.x - 6, this.y + 7, 12, 3);
@@ -291,6 +287,11 @@ function gameLoop() {
     ctx.fillStyle = '#02030a';
     ctx.fillRect(0, 0, logicalWidth, logicalHeight);
     
+    // Искусственный микро-сдвиг для обмана энергосбережения мобильных браузеров
+    if (isPressing) {
+        plane.targetX += (Math.random() - 0.5) * 0.01;
+    }
+
     ctx.fillStyle = '#ffffff';
     spaceStars.forEach(star => {
         star.y += star.speed * (speed * 0.8); if (star.y > logicalHeight) { star.y = 0; star.x = Math.random() * logicalWidth; }
