@@ -13,23 +13,17 @@
             -webkit-touch-callout: none; -webkit-user-select: none; user-select: none;
         }
         #game-container { 
-            position: relative; 
-            width: 100vw; 
-            height: 100vh; 
-            max-width: 420px; 
+            position: relative; width: 100vw; height: 100vh; 
             display: flex; justify-content: center; align-items: center; 
             background: #02030a; overflow: hidden;
-            box-shadow: 0 0 30px rgba(0, 162, 255, 0.15);
         }
         canvas { 
             display: block; cursor: crosshair; 
-            width: 100%; height: 100%;
         }
         .ui-panel {
-            position: absolute; top: 15px; left: 15px; pointer-events: none;
-            font-size: 14px; font-weight: bold; text-shadow: 0 0 4px rgba(0,0,0,1);
-            font-family: monospace; line-height: 1.5; z-index: 5;
-            background: rgba(2, 3, 10, 0.6); padding: 6px 10px; border-radius: 6px;
+            position: absolute; top: 15px; left: 20px; pointer-events: none;
+            font-size: 16px; font-weight: bold; text-shadow: 0 0 4px rgba(0,0,0,0.8);
+            font-family: monospace; line-height: 1.6; z-index: 5;
         }
         #score { color: #00f0ff; }
         #highscore { color: #ffea00; }
@@ -37,7 +31,7 @@
         #weapon-display { color: #00ff66; }
         #game-over-screen {
             display: none; position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(2, 4, 8, 0.95); flex-direction: column;
+            background: rgba(2, 4, 8, 0.90); flex-direction: column;
             align-items: center; justify-content: center; z-index: 10; text-align: center;
         }
         .modal-content {
@@ -50,6 +44,9 @@
             margin: 10px; transition: 0.2s; 
         }
         button:active { transform: scale(0.95); }
+        @media (min-width: 600px) {
+            #game-container { max-width: 500px; max-height: 800px; border-radius: 12px; border: 1px solid #111; }
+        }
     </style>
 </head>
 <body>
@@ -81,8 +78,8 @@ const lvlEl = document.getElementById('lvl-display');
 const weaponEl = document.getElementById('weapon-display');
 const gameOverScreen = document.getElementById('game-over-screen');
 
-let logicalWidth = 420;
-let logicalHeight = window.innerHeight;
+let logicalWidth = 500;
+let logicalHeight = window.innerHeight > 800 ? 800 : window.innerHeight;
 
 function resizeCanvas() {
     const container = document.getElementById('game-container');
@@ -92,6 +89,8 @@ function resizeCanvas() {
     const dpr = window.devicePixelRatio || 1;
     canvas.width = logicalWidth * dpr;
     canvas.height = logicalHeight * dpr;
+    canvas.style.width = logicalWidth + 'px';
+    canvas.style.height = logicalHeight + 'px';
     ctx.scale(dpr, dpr);
 }
 window.addEventListener('resize', resizeCanvas);
@@ -102,12 +101,7 @@ let highScore = 0;
 let gameLevel = 1;
 let isGameOver = false;
 
-// НАСТРОЙКА НАКОПЛЕНИЯ ВРЕМЕНИ (ФИКСИРОВАННЫЙ ШАГ)
-let lastTime = performance.now();
-let dtAccumulator = 0.0;
-const FIXED_DT = 1 / 60; // Ровно 60 обновлений физики в секунду (0.0166с)
-
-const START_SPEED = 1.25; 
+const START_SPEED = 1.0; 
 let speed = START_SPEED;
 let obstacles = [];
 let lasers = []; 
@@ -115,7 +109,7 @@ let spaceStars = [];
 
 let isPressing = false;
 let fireCooldown = 0;
-const MAX_COOLDOWN = 13; // Коулдаун в кадрах (возвращен к исходному балансу)
+let maxCooldown = 12; 
 let audioCtx = null;
 
 let plane = {
@@ -168,24 +162,17 @@ class Laser {
 
 class Obstacle {
     constructor() {
-        this.size = 24; 
+        this.x = Math.random() * (logicalWidth - 60) + 30; this.y = -60;
         this.type = Math.floor(Math.random() * 4); 
-        if (this.type === 0) this.size = 20;
-        else if (this.type === 1) this.size = 38;
-        else if (this.type === 2) this.size = 18;
-
-        this.x = Math.random() * (logicalWidth - (this.size * 2)) + this.size; 
-        this.y = -60;
-        
-        if (this.type === 0) { this.hp = 1 + Math.floor(gameLevel * 0.5); } 
-        else if (this.type === 1) { this.hp = 4 + Math.floor(gameLevel * 2.0); } 
+        if (this.type === 0) { this.size = 20; this.hp = 1 + Math.floor(gameLevel * 0.5); } 
+        else if (this.type === 1) { this.size = 40; this.hp = 4 + Math.floor(gameLevel * 2.0); } 
         else if (this.type === 2) { 
-            this.hp = 1 + Math.floor(gameLevel * 0.4); this.points = [];
+            this.size = 18; this.hp = 1 + Math.floor(gameLevel * 0.4); this.points = [];
             for (let i = 0; i < 8; i++) {
                 let a = (i / 8) * Math.PI * 2;
                 this.points.push({x: Math.cos(a) * (0.8 + Math.random() * 0.4), y: Math.sin(a) * (0.8 + Math.random() * 0.4)});
             }
-        } else { this.hp = 3 + Math.floor(gameLevel * 1.2); }
+        } else { this.size = 24; this.hp = 3 + Math.floor(gameLevel * 1.2); }
     }
     update() { this.y += speed; }
     draw() {
@@ -275,21 +262,42 @@ function resetGame() {
     isGameOver = false; gameOverScreen.style.display = 'none';
     plane.x = logicalWidth / 2;
     plane.targetX = logicalWidth / 2;
-    lastTime = performance.now();
-    dtAccumulator = 0;
     requestAnimationFrame(gameLoop);
 }
 
-// ФУНКЦИЯ ОБНОВЛЕНИЯ ФИЗИКИ (Вызывается строго фиксированное количество раз)
-function updateGameTicks() {
-    if (isGameOver) return;
+function drawPlane() {
+    let prevX = plane.x; 
+    plane.x += (plane.targetX - plane.x) * 0.18; 
+    plane.y += (plane.targetY - plane.y) * 0.18;
+    plane.x = Math.max(25, Math.min(logicalWidth - 25, plane.x));
+    
+    ctx.save(); ctx.translate(plane.x, plane.y);
+    let targetRotation = (plane.x - prevX) * 0.08; 
+    plane.rotation += (targetRotation - plane.rotation) * 0.2;
+    ctx.rotate(Math.max(-0.4, Math.min(0.4, plane.rotation)));
+    
+    ctx.fillStyle = '#dcdce6';
+    ctx.beginPath(); ctx.moveTo(0, -20); ctx.lineTo(4, -6); ctx.lineTo(22, 12); ctx.lineTo(16, 12); ctx.lineTo(4, 4); ctx.lineTo(0, 12); ctx.lineTo(-4, 4); ctx.lineTo(-16, 12); ctx.lineTo(-22, 12); ctx.lineTo(-4, -6); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#00e1ff'; ctx.fillRect(-5, 8, 2, 3 + Math.random() * 4); ctx.fillRect(3, 8, 2, 3 + Math.random() * 4); 
+    ctx.restore();
+}
 
-    // Звезды
+function gameLoop() {
+    if (isGameOver) return; 
+    ctx.fillStyle = '#02030a';
+    ctx.fillRect(0, 0, logicalWidth, logicalHeight);
+    
+    // Искусственный микро-сдвиг для обмана энергосбережения мобильных браузеров
+    if (isPressing) {
+        plane.targetX += (Math.random() - 0.5) * 0.01;
+    }
+
+    ctx.fillStyle = '#ffffff';
     spaceStars.forEach(star => {
-        star.y += star.speed * (speed * 0.6); if (star.y > logicalHeight) { star.y = 0; star.x = Math.random() * logicalWidth; }
+        star.y += star.speed * (speed * 0.8); if (star.y > logicalHeight) { star.y = 0; star.x = Math.random() * logicalWidth; }
+        ctx.fillRect(star.x, star.y, star.size, star.size);
     });
     
-    // Возвращена оригинальная логика стрельбы при удержании пальца
     if (fireCooldown > 0) fireCooldown--;
     if (isPressing && fireCooldown <= 0) {
         if (gameLevel === 1) { lasers.push(new Laser(plane.x, plane.y)); } 
@@ -298,9 +306,8 @@ function updateGameTicks() {
         playLaserSound(); fireCooldown = maxCooldown;
     }
     
-    // Лазеры
     for (let l = lasers.length - 1; l >= 0; l--) {
-        lasers[l].update(); 
+        lasers[l].update(); lasers[l].draw(); 
         if (lasers[l].y < -10) { lasers.splice(l, 1); continue; }
         
         for (let o = obstacles.length - 1; o >= 0; o--) {
@@ -315,14 +322,12 @@ function updateGameTicks() {
         }
     }
     
-    // Препятствия
     for (let i = obstacles.length - 1; i >= 0; i--) {
-        obstacles[i].update();
+        obstacles[i].update(); obstacles[i].draw();
         if (obstacles[i].checkCollision()) { triggerGameOver(); return; }
         if (obstacles[i].y > logicalHeight + 60) { obstacles.splice(i, 1); score += 10; scoreEl.innerText = score; }
     }
     
-    // Прокачка уровней
     let targetLevel = 1 + Math.floor(score / 500);
     if (targetLevel > gameLevel) {
         gameLevel = targetLevel; lvlEl.innerText = gameLevel;
@@ -332,65 +337,12 @@ function updateGameTicks() {
         playLevelUpSound(); speed += 0.15; 
     }
     
-    spawnObstacles();
-
-    // Сглаживание корабля привязано к тику
-    let prevX = plane.x; 
-    plane.x += (plane.targetX - plane.x) * 0.18; 
-    plane.y += (plane.targetY - plane.y) * 0.18;
-    plane.x = Math.max(25, Math.min(logicalWidth - 25, plane.x));
-    
-    let targetRotation = (plane.x - prevX) * 0.08; 
-    plane.rotation += (targetRotation - plane.rotation) * 0.2;
-}
-
-function gameLoop(timestamp) {
-    if (isGameOver) return; 
-
-    // Считаем реальное прошедшее время
-    let frameTime = (timestamp - lastTime) / 1000;
-    if (frameTime > 0.25) frameTime = 0.25; // Защита от зависаний
-    lastTime = timestamp;
-
-    dtAccumulator += frameTime;
-
-    // ЕСЛИ ТЕЛЕФОН ЗАСЫПАЕТ, ЭТОТ ЦИКЛ ВЫПОЛНИТСЯ НЕСКОЛЬКО РАЗ ПОДРЯД И ДОГОНИТ ВРЕМЯ!
-    while (dtAccumulator >= FIXED_DT) {
-        updateGameTicks();
-        dtAccumulator -= FIXED_DT;
-    }
-
-    // ОТРИСОВКА (Происходит всегда на актуальной скорости)
-    ctx.fillStyle = '#02030a';
-    ctx.fillRect(0, 0, logicalWidth, logicalHeight);
-
-    // Рисуем звезды
-    ctx.fillStyle = '#ffffff';
-    spaceStars.forEach(star => {
-        ctx.fillRect(star.x, star.y, star.size, star.size);
-    });
-
-    // Рисуем лазеры
-    lasers.forEach(l => l.draw());
-
-    // Рисуем препятствия
-    obstacles.forEach(o => o.draw());
-
-    // Рисуем корабль
-    ctx.save(); 
-    ctx.translate(plane.x, plane.y);
-    ctx.rotate(Math.max(-0.4, Math.min(0.4, plane.rotation)));
-    ctx.fillStyle = '#dcdce6';
-    ctx.beginPath(); ctx.moveTo(0, -20); ctx.lineTo(4, -6); ctx.lineTo(22, 12); ctx.lineTo(16, 12); ctx.lineTo(4, 4); ctx.lineTo(0, 12); ctx.lineTo(-4, 4); ctx.lineTo(-16, 12); ctx.lineTo(-22, 12); ctx.lineTo(-4, -6); ctx.closePath(); ctx.fill();
-    ctx.fillStyle = '#00e1ff'; ctx.fillRect(-5, 8, 2, 3 + Math.random() * 4); ctx.fillRect(3, 8, 2, 3 + Math.random() * 4); 
-    ctx.restore();
-
+    spawnObstacles(); 
+    drawPlane(); 
     requestAnimationFrame(gameLoop);
 }
 
 window.addEventListener('load', () => {
-    resizeCanvas();
-    lastTime = performance.now();
     requestAnimationFrame(gameLoop);
 });
 </script>
