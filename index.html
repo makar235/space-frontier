@@ -16,7 +16,7 @@
             position: relative; 
             width: 100vw; 
             height: 100vh; 
-            max-width: 420px; /* Фиксируем ширину игровой зоны как на видео */
+            max-width: 420px; 
             display: flex; justify-content: center; align-items: center; 
             background: #02030a; overflow: hidden;
             box-shadow: 0 0 30px rgba(0, 162, 255, 0.15);
@@ -81,7 +81,6 @@ const lvlEl = document.getElementById('lvl-display');
 const weaponEl = document.getElementById('weapon-display');
 const gameOverScreen = document.getElementById('game-over-screen');
 
-// Строго контролируемые размеры игровой зоны
 let logicalWidth = 420;
 let logicalHeight = window.innerHeight;
 
@@ -103,7 +102,10 @@ let highScore = 0;
 let gameLevel = 1;
 let isGameOver = false;
 
-const START_SPEED = 1.0; 
+// ПРАВИЛЬНЫЙ ТАЙМИНГ (Замеряем миллисекунды)
+let lastTime = performance.now();
+
+const START_SPEED = 75.0; // Скорость препятствий (пикселей в секунду)
 let speed = START_SPEED;
 let obstacles = [];
 let lasers = []; 
@@ -111,7 +113,7 @@ let spaceStars = [];
 
 let isPressing = false;
 let fireCooldown = 0;
-let maxCooldown = 12; 
+const MAX_COOLDOWN = 0.22; // Коулдаун стрельбы в секундах (~4.5 выстрела в сек)
 let audioCtx = null;
 
 let plane = {
@@ -149,13 +151,13 @@ function playHitSound() { playTone(180, 'triangle', 0.05, 0.05); }
 for (let i = 0; i < 40; i++) {
     spaceStars.push({
         x: Math.random() * logicalWidth, y: Math.random() * logicalHeight,
-        size: Math.random() * 1.8, speed: 0.2 + Math.random() * 0.8
+        size: Math.random() * 1.8, speed: 20 + Math.random() * 60
     });
 }
 
 class Laser {
-    constructor(x, y) { this.x = x; this.y = y - 15; this.speedY = 14; this.w = 3; this.h = 14; }
-    update() { this.y -= this.speedY; }
+    constructor(x, y) { this.x = x; this.y = y - 15; this.speedY = 850; this.w = 3; this.h = 14; }
+    update(dt) { this.y -= this.speedY * dt; }
     draw() {
         ctx.fillStyle = '#66ff99'; 
         ctx.fillRect(this.x - this.w/2, this.y, this.w, this.h); 
@@ -164,7 +166,6 @@ class Laser {
 
 class Obstacle {
     constructor() {
-        // Ограничиваем спавн строго по рамкам видимой зоны
         this.size = 24; 
         this.type = Math.floor(Math.random() * 4); 
         if (this.type === 0) this.size = 20;
@@ -184,7 +185,7 @@ class Obstacle {
             }
         } else { this.hp = 3 + Math.floor(gameLevel * 1.2); }
     }
-    update() { this.y += speed; }
+    update(dt) { this.y += speed * dt; }
     draw() {
         ctx.save();
         if (this.type === 3) {
@@ -251,9 +252,16 @@ canvas.addEventListener('touchstart', (e) => {
 
 window.addEventListener('touchend', () => { isPressing = false; });
 
-function spawnObstacles() {
+// Шанс спавна привязан к секундам (dt), а не кадрам
+let spawnTimer = 0;
+function spawnObstacles(dt) {
     if (isGameOver) return;
-    if (Math.random() < 0.015 + (gameLevel * 0.001)) { obstacles.push(new Obstacle()); }
+    spawnTimer += dt;
+    let spawnInterval = 0.9 / (1 + gameLevel * 0.08); // Чем выше уровень, тем чаще спавн
+    if (spawnTimer >= spawnInterval) {
+        obstacles.push(new Obstacle());
+        spawnTimer = 0;
+    }
 }
 
 function updateHighScore() {
@@ -272,18 +280,21 @@ function resetGame() {
     isGameOver = false; gameOverScreen.style.display = 'none';
     plane.x = logicalWidth / 2;
     plane.targetX = logicalWidth / 2;
+    lastTime = performance.now();
     requestAnimationFrame(gameLoop);
 }
 
-function drawPlane() {
+function drawPlane(dt) {
     let prevX = plane.x; 
-    plane.x += (plane.targetX - plane.x) * 0.18; 
-    plane.y += (plane.targetY - plane.y) * 0.18;
+    // Сглаживание интерполировано по времени (движение корабля одинаково при любом лаге)
+    let lerpSpeed = 1 - Math.pow(0.0001, dt);
+    plane.x += (plane.targetX - plane.x) * lerpSpeed; 
+    plane.y += (plane.targetY - plane.y) * lerpSpeed;
     plane.x = Math.max(25, Math.min(logicalWidth - 25, plane.x));
     
     ctx.save(); ctx.translate(plane.x, plane.y);
     let targetRotation = (plane.x - prevX) * 0.08; 
-    plane.rotation += (targetRotation - plane.rotation) * 0.2;
+    plane.rotation += (targetRotation - plane.rotation) * lerpSpeed;
     ctx.rotate(Math.max(-0.4, Math.min(0.4, plane.rotation)));
     
     ctx.fillStyle = '#dcdce6';
@@ -292,31 +303,37 @@ function drawPlane() {
     ctx.restore();
 }
 
-function gameLoop() {
+function gameLoop(timestamp) {
     if (isGameOver) return; 
+
+    // Вычисляем честное Delta Time в секундах
+    let dt = (timestamp - lastTime) / 1000;
+    if (dt > 0.1) dt = 0.1; // Защита от резкого скачка при выходе из спящего режима
+    lastTime = timestamp;
+
     ctx.fillStyle = '#02030a';
     ctx.fillRect(0, 0, logicalWidth, logicalHeight);
-    
-    if (isPressing) {
-        plane.targetX += (Math.random() - 0.5) * 0.01;
-    }
 
+    // Звезды
     ctx.fillStyle = '#ffffff';
     spaceStars.forEach(star => {
-        star.y += star.speed * (speed * 0.8); if (star.y > logicalHeight) { star.y = 0; star.x = Math.random() * logicalWidth; }
+        star.y += star.speed * (speed / START_SPEED) * dt * 1.5; 
+        if (star.y > logicalHeight) { star.y = 0; star.x = Math.random() * logicalWidth; }
         ctx.fillRect(star.x, star.y, star.size, star.size);
     });
     
-    if (fireCooldown > 0) fireCooldown--;
+    // Перезарядка оружия
+    if (fireCooldown > 0) fireCooldown -= dt;
     if (isPressing && fireCooldown <= 0) {
         if (gameLevel === 1) { lasers.push(new Laser(plane.x, plane.y)); } 
         else if (gameLevel === 2) { lasers.push(new Laser(plane.x - 14, plane.y)); lasers.push(new Laser(plane.x + 14, plane.y)); } 
         else { lasers.push(new Laser(plane.x, plane.y - 5)); lasers.push(new Laser(plane.x - 18, plane.y)); lasers.push(new Laser(plane.x + 18, plane.y)); }
-        playLaserSound(); fireCooldown = maxCooldown;
+        playLaserSound(); fireCooldown = MAX_COOLDOWN;
     }
     
+    // Лазеры
     for (let l = lasers.length - 1; l >= 0; l--) {
-        lasers[l].update(); lasers[l].draw(); 
+        lasers[l].update(dt); lasers[l].draw(); 
         if (lasers[l].y < -10) { lasers.splice(l, 1); continue; }
         
         for (let o = obstacles.length - 1; o >= 0; o--) {
@@ -331,28 +348,32 @@ function gameLoop() {
         }
     }
     
+    // Препятствия
     for (let i = obstacles.length - 1; i >= 0; i--) {
-        obstacles[i].update(); obstacles[i].draw();
+        obstacles[i].update(dt); obstacles[i].draw();
         if (obstacles[i].checkCollision()) { triggerGameOver(); return; }
         if (obstacles[i].y > logicalHeight + 60) { obstacles.splice(i, 1); score += 10; scoreEl.innerText = score; }
     }
     
+    // Повышение уровня
     let targetLevel = 1 + Math.floor(score / 500);
     if (targetLevel > gameLevel) {
         gameLevel = targetLevel; lvlEl.innerText = gameLevel;
         if (gameLevel === 1) weaponEl.innerText = "BLASTER x1";
         else if (gameLevel === 2) weaponEl.innerText = "BLASTER x2";
         else weaponEl.innerText = "HYPER-CHARGE x3";
-        playLevelUpSound(); speed += 0.15; 
+        playLevelUpSound(); 
+        speed += 12.0; // Повышаем скорость на 12 пикселей в секунду
     }
     
-    spawnObstacles(); 
-    drawPlane(); 
+    spawnObstacles(dt); 
+    drawPlane(dt); 
     requestAnimationFrame(gameLoop);
 }
 
 window.addEventListener('load', () => {
     resizeCanvas();
+    lastTime = performance.now();
     requestAnimationFrame(gameLoop);
 });
 </script>
