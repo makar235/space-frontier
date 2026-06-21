@@ -13,17 +13,23 @@
             -webkit-touch-callout: none; -webkit-user-select: none; user-select: none;
         }
         #game-container { 
-            position: relative; width: 100vw; height: 100vh; 
+            position: relative; 
+            width: 100vw; 
+            height: 100vh; 
+            max-width: 420px; 
             display: flex; justify-content: center; align-items: center; 
             background: #02030a; overflow: hidden;
+            box-shadow: 0 0 30px rgba(0, 162, 255, 0.15);
         }
         canvas { 
             display: block; cursor: crosshair; 
+            width: 100%; height: 100%;
         }
         .ui-panel {
-            position: absolute; top: 15px; left: 20px; pointer-events: none;
-            font-size: 16px; font-weight: bold; text-shadow: 0 0 4px rgba(0,0,0,0.8);
-            font-family: monospace; line-height: 1.6; z-index: 5;
+            position: absolute; top: 15px; left: 15px; pointer-events: none;
+            font-size: 14px; font-weight: bold; text-shadow: 0 0 4px rgba(0,0,0,1);
+            font-family: monospace; line-height: 1.5; z-index: 5;
+            background: rgba(2, 3, 10, 0.6); padding: 6px 10px; border-radius: 6px;
         }
         #score { color: #00f0ff; }
         #highscore { color: #ffea00; }
@@ -31,7 +37,7 @@
         #weapon-display { color: #00ff66; }
         #game-over-screen {
             display: none; position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(2, 4, 8, 0.90); flex-direction: column;
+            background: rgba(2, 4, 8, 0.95); flex-direction: column;
             align-items: center; justify-content: center; z-index: 10; text-align: center;
         }
         .modal-content {
@@ -44,9 +50,6 @@
             margin: 10px; transition: 0.2s; 
         }
         button:active { transform: scale(0.95); }
-        @media (min-width: 600px) {
-            #game-container { max-width: 500px; max-height: 800px; border-radius: 12px; border: 1px solid #111; }
-        }
     </style>
 </head>
 <body>
@@ -78,8 +81,8 @@ const lvlEl = document.getElementById('lvl-display');
 const weaponEl = document.getElementById('weapon-display');
 const gameOverScreen = document.getElementById('game-over-screen');
 
-let logicalWidth = 500;
-let logicalHeight = window.innerHeight > 800 ? 800 : window.innerHeight;
+let logicalWidth = 420;
+let logicalHeight = window.innerHeight;
 
 function resizeCanvas() {
     const container = document.getElementById('game-container');
@@ -89,8 +92,6 @@ function resizeCanvas() {
     const dpr = window.devicePixelRatio || 1;
     canvas.width = logicalWidth * dpr;
     canvas.height = logicalHeight * dpr;
-    canvas.style.width = logicalWidth + 'px';
-    canvas.style.height = logicalHeight + 'px';
     ctx.scale(dpr, dpr);
 }
 window.addEventListener('resize', resizeCanvas);
@@ -101,7 +102,7 @@ let highScore = 0;
 let gameLevel = 1;
 let isGameOver = false;
 
-const START_SPEED = 1.0; 
+const START_SPEED = 1.25; 
 let speed = START_SPEED;
 let obstacles = [];
 let lasers = []; 
@@ -162,17 +163,24 @@ class Laser {
 
 class Obstacle {
     constructor() {
-        this.x = Math.random() * (logicalWidth - 60) + 30; this.y = -60;
+        this.size = 24; 
         this.type = Math.floor(Math.random() * 4); 
-        if (this.type === 0) { this.size = 20; this.hp = 1 + Math.floor(gameLevel * 0.5); } 
-        else if (this.type === 1) { this.size = 40; this.hp = 4 + Math.floor(gameLevel * 2.0); } 
+        if (this.type === 0) this.size = 20;
+        else if (this.type === 1) this.size = 38;
+        else if (this.type === 2) this.size = 18;
+
+        this.x = Math.random() * (logicalWidth - (this.size * 2)) + this.size; 
+        this.y = -60;
+        
+        if (this.type === 0) { this.hp = 1 + Math.floor(gameLevel * 0.5); } 
+        else if (this.type === 1) { this.hp = 4 + Math.floor(gameLevel * 2.0); } 
         else if (this.type === 2) { 
-            this.size = 18; this.hp = 1 + Math.floor(gameLevel * 0.4); this.points = [];
+            this.hp = 1 + Math.floor(gameLevel * 0.4); this.points = [];
             for (let i = 0; i < 8; i++) {
                 let a = (i / 8) * Math.PI * 2;
                 this.points.push({x: Math.cos(a) * (0.8 + Math.random() * 0.4), y: Math.sin(a) * (0.8 + Math.random() * 0.4)});
             }
-        } else { this.size = 24; this.hp = 3 + Math.floor(gameLevel * 1.2); }
+        } else { this.hp = 3 + Math.floor(gameLevel * 1.2); }
     }
     update() { this.y += speed; }
     draw() {
@@ -218,6 +226,7 @@ class Obstacle {
     }
 }
 
+// Использование Pointer Events (работает одинаково круто для мыши и пальцев)
 const handleMove = (clientX, clientY) => {
     if (isGameOver) return;
     const rect = canvas.getBoundingClientRect();
@@ -225,21 +234,19 @@ const handleMove = (clientX, clientY) => {
     plane.targetY = Math.max(logicalHeight - 180, Math.min(logicalHeight - 40, clientY - rect.top));
 };
 
-canvas.addEventListener('mousemove', (e) => handleMove(e.clientX, e.clientY));
-canvas.addEventListener('mousedown', () => { if (!isGameOver) { initAudio(); isPressing = true; } });
-window.addEventListener('mouseup', () => { isPressing = false; });
+canvas.addEventListener('pointermove', (e) => {
+    handleMove(e.clientX, e.clientY);
+});
 
-canvas.addEventListener('touchmove', (e) => {
-    e.preventDefault();
-    handleMove(e.touches[0].clientX, e.touches[0].clientY);
-}, {passive: false});
+canvas.addEventListener('pointerdown', (e) => {
+    if (!isGameOver) { 
+        initAudio(); 
+        isPressing = true; 
+        handleMove(e.clientX, e.clientY);
+    }
+});
 
-canvas.addEventListener('touchstart', (e) => { 
-    e.preventDefault();
-    if (!isGameOver) { initAudio(); isPressing = true; handleMove(e.touches[0].clientX, e.touches[0].clientY); } 
-}, {passive: false});
-
-window.addEventListener('touchend', () => { isPressing = false; });
+window.addEventListener('pointerup', () => { isPressing = false; });
 
 function spawnObstacles() {
     if (isGameOver) return;
@@ -287,7 +294,7 @@ function gameLoop() {
     ctx.fillStyle = '#02030a';
     ctx.fillRect(0, 0, logicalWidth, logicalHeight);
     
-    // Искусственный микро-сдвиг для обмана энергосбережения мобильных браузеров
+    // Микро-смещение для обхода блокировки частоты кадров
     if (isPressing) {
         plane.targetX += (Math.random() - 0.5) * 0.01;
     }
@@ -343,6 +350,7 @@ function gameLoop() {
 }
 
 window.addEventListener('load', () => {
+    resizeCanvas();
     requestAnimationFrame(gameLoop);
 });
 </script>
