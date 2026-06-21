@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Space Frontier: Dark Galaxy</title>
+    <style>
+        body { 
+            margin: 0; padding: 0; background: #010206; color: #fff;
+            font-family: 'Segoe UI', sans-serif; display: flex;
+            flex-direction: column; align-items: center; justify-content: center;
+            height: 100vh; overflow: hidden; touch-action: none; 
+            -webkit-touch-callout: none; -webkit-user-select: none; user-select: none;
+        }
+        #game-container { 
+            position: relative; width: 100vw; height: 100vh; 
+            display: flex; justify-content: center; align-items: center; 
+            background: #02030a; overflow: hidden;
+        }
+        canvas { 
+            display: block; cursor: crosshair; 
+        }
+        .ui-panel {
+            position: absolute; top: 15px; left: 20px; pointer-events: none;
+            font-size: 16px; font-weight: bold; text-shadow: 0 0 4px rgba(0,0,0,0.8);
+            font-family: monospace; line-height: 1.6; z-index: 5;
+        }
+        #score { color: #00f0ff; }
+        #highscore { color: #ffea00; }
+        #lvl-display { color: #ffea00; }
+        #weapon-display { color: #00ff66; }
+        #game-over-screen {
+            display: none; position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(2, 4, 8, 0.90); flex-direction: column;
+            align-items: center; justify-content: center; z-index: 10; text-align: center;
+        }
+        .modal-content {
+            background: #090d22; padding: 35px; border-radius: 15px;
+            border: 2px solid #00f0ff; max-width: 80%; box-shadow: 0 0 15px rgba(0, 240, 255, 0.3);
+        }
+        button {
+            background: #ffea00; color: #020408; border: none; padding: 14px 30px;
+            font-size: 18px; font-weight: bold; border-radius: 30px; cursor: pointer;
+            margin: 10px; transition: 0.2s; 
+        }
+        button:active { transform: scale(0.95); }
+        @media (min-width: 600px) {
+            #game-container { max-width: 500px; max-height: 800px; border-radius: 12px; border: 1px solid #111; }
+        }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <div class="ui-panel">
+        SECTOR: <span id="lvl-display">1</span><br>
+        WEAPON: <span id="weapon-display">BLASTER x1</span><br>
+        SCORE: <span id="score">0</span><br>
+        BEST SESSION: <span id="highscore">0</span>
+    </div>
+    <canvas id="gameCanvas"></canvas>
+    
+    <div id="game-over-screen">
+        <div class="modal-content">
+            <h2 style="color: #ff0055; font-size: 32px; margin-top:0;">SHIP DESTROYED!</h2>
+            <p>Your mission has failed.</p>
+            <button type="button" onclick="resetGame()">Restart Mission</button>
+        </div>
+    </div>
+</div>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d', { alpha: false }); 
+const scoreEl = document.getElementById('score');
+const highscoreEl = document.getElementById('highscore');
+const lvlEl = document.getElementById('lvl-display');
+const weaponEl = document.getElementById('weapon-display');
+const gameOverScreen = document.getElementById('game-over-screen');
+
+let logicalWidth = 500;
+let logicalHeight = window.innerHeight > 800 ? 800 : window.innerHeight;
+
+function resizeCanvas() {
+    const container = document.getElementById('game-container');
+    logicalWidth = container.clientWidth;
+    logicalHeight = container.clientHeight;
+    
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = logicalWidth * dpr;
+    canvas.height = logicalHeight * dpr;
+    canvas.style.width = logicalWidth + 'px';
+    canvas.style.height = logicalHeight + 'px';
+    ctx.scale(dpr, dpr);
+}
+window.addEventListener('resize', resizeCanvas);
+resizeCanvas();
+
+let score = 0;
+let highScore = 0; 
+let gameLevel = 1;
+let isGameOver = false;
+
+const START_SPEED = 1.0; 
+let speed = START_SPEED;
+let obstacles = [];
+let lasers = []; 
+let spaceStars = [];
+
+let isPressing = false;
+let fireCooldown = 0;
+let maxCooldown = 12; 
+let audioCtx = null;
+
+let plane = {
+    x: logicalWidth / 2, y: logicalHeight - 80,
+    targetX: logicalWidth / 2, targetY: logicalHeight - 80,
+    width: 36, height: 36, rotation: 0
+};
+
+function initAudio() {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+}
+
+function playTone(freq, type, duration, vol) {
+    if (!audioCtx) return;
+    let now = audioCtx.currentTime;
+    let osc = audioCtx.createOscillator(); 
+    let gain = audioCtx.createGain();
+    osc.connect(gain); gain.connect(audioCtx.destination); 
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, now); 
+    gain.gain.setValueAtTime(vol, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + duration);
+    osc.start(now); osc.stop(now + duration);
+}
+
+function playLevelUpSound() {
+    [293.66, 349.23, 440.00, 587.33].forEach((f, i) => {
+        setTimeout(() => playTone(f, 'sine', 0.3, 0.04), i * 50);
+    });
+}
+function playLaserSound() { playTone(600, 'sawtooth', 0.1, 0.02); }
+function playHitSound() { playTone(180, 'triangle', 0.05, 0.05); }
+
+for (let i = 0; i < 40; i++) {
+    spaceStars.push({
+        x: Math.random() * logicalWidth, y: Math.random() * logicalHeight,
+        size: Math.random() * 1.8, speed: 0.2 + Math.random() * 0.8
+    });
+}
+
+class Laser {
+    constructor(x, y) { this.x = x; this.y = y - 15; this.speedY = 14; this.w = 3; this.h = 14; }
+    update() { this.y -= this.speedY; }
+    draw() {
+        ctx.fillStyle = '#66ff99'; 
+        ctx.fillRect(this.x - this.w/2, this.y, this.w, this.h); 
+    }
+}
+
+class Obstacle {
+    constructor() {
+        this.x = Math.random() * (logicalWidth - 60) + 30; this.y = -60;
+        this.type = Math.floor(Math.random() * 4); 
+        if (this.type === 0) { this.size = 20; this.hp = 1 + Math.floor(gameLevel * 0.5); } 
+        else if (this.type === 1) { this.size = 40; this.hp = 4 + Math.floor(gameLevel * 2.0); } 
+        else if (this.type === 2) { 
+            this.size = 18; this.hp = 1 + Math.floor(gameLevel * 0.4); this.points = [];
+            for (let i = 0; i < 8; i++) {
+                let a = (i / 8) * Math.PI * 2;
+                this.points.push({x: Math.cos(a) * (0.8 + Math.random() * 0.4), y: Math.sin(a) * (0.8 + Math.random() * 0.4)});
+            }
+        } else { this.size = 24; this.hp = 3 + Math.floor(gameLevel * 1.2); }
+    }
+    update() { this.y += speed; }
+    draw() {
+        ctx.save();
+        if (this.type === 3) {
+            // ДАРТ ВЕЙДЕР (Возвращены оригинальные детали корпуса и КРАСНЫЙ МЕЧ)
+            ctx.fillStyle = '#15161c';
+            ctx.beginPath(); ctx.moveTo(this.x - 22, this.y + 16); ctx.lineTo(this.x + 22, this.y + 16); ctx.lineTo(this.x + 14, this.y - 4); ctx.lineTo(this.x - 14, this.y - 4); ctx.closePath(); ctx.fill();
+            ctx.fillStyle = '#252831'; ctx.beginPath(); ctx.arc(this.x, this.y - 2, 14, Math.PI, 0); ctx.fill();
+            ctx.fillStyle = '#0d0e12'; ctx.beginPath(); ctx.moveTo(this.x, this.y + 2); ctx.lineTo(this.x - 5, this.y + 12); ctx.lineTo(this.x + 5, this.y + 12); ctx.closePath(); ctx.fill();
+            ctx.fillStyle = '#ff3333'; ctx.fillRect(this.x - 7, this.y, 4, 2); ctx.fillRect(this.x + 3, this.y, 4, 2);
+            // Тот самый красный меч:
+            ctx.strokeStyle = '#ff0000'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(this.x + 24, this.y + 10); ctx.lineTo(this.x + 24, this.y - 12); ctx.stroke();
+        } else if (this.type === 0) {
+            // ШТУРМОВИК (Возвращены черные глаза и детали маски)
+            ctx.fillStyle = '#f0f0f5';
+            ctx.beginPath(); ctx.arc(this.x, this.y, 14, 0, Math.PI * 2); ctx.fill(); ctx.fillRect(this.x - 14, this.y, 28, 12);
+            ctx.fillStyle = '#1c1d22'; 
+            // Рисуем глаза маски штурмовика:
+            ctx.beginPath(); ctx.moveTo(this.x - 9, this.y - 2); ctx.lineTo(this.x - 2, this.y + 1); ctx.lineTo(this.x - 4, this.y + 4); ctx.closePath(); ctx.fill();
+            ctx.beginPath(); ctx.moveTo(this.x + 9, this.y - 2); ctx.lineTo(this.x + 2, this.y + 1); ctx.lineTo(this.x + 4, this.y + 4); ctx.closePath(); ctx.fill(); 
+            ctx.fillRect(this.x - 6, this.y + 7, 12, 3);
+        } else if (this.type === 1) {
+            let r = this.size; ctx.fillStyle = '#434852';
+            ctx.beginPath(); ctx.arc(this.x, this.y, r, 0, Math.PI * 2); ctx.fill(); 
+            ctx.strokeStyle = '#24272e'; ctx.lineWidth = 2;
+            ctx.beginPath(); ctx.moveTo(this.x - r, this.y); ctx.lineTo(this.x + r, this.y); ctx.stroke();
+            ctx.fillStyle = '#2b2e36'; ctx.beginPath(); ctx.arc(this.x - 12, this.y - 12, 8, 0, Math.PI * 2); ctx.fill();
+        } else if (this.type === 2) {
+            ctx.strokeStyle = '#2c2e36'; ctx.lineWidth = 1.5;
+            for(let i=0; i<8; i++) {
+                let next = (i + 1) % 8;
+                let p1 = {x: this.x + this.points[i].x * this.size, y: this.y + this.points[i].y * this.size};
+                let p2 = {x: this.x + this.points[next].x * this.size, y: this.y + this.points[next].y * this.size};
+                ctx.fillStyle = (i % 2 === 0) ? '#4a4e59' : '#5c6270';
+                ctx.beginPath(); ctx.moveTo(this.x, this.y); ctx.lineTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.closePath(); ctx.fill(); ctx.stroke();
+            }
+        }
+        ctx.fillStyle = '#ffffff'; ctx.font = 'bold 13px monospace'; ctx.textAlign = 'center'; ctx.fillText(`[${this.hp}]`, this.x, this.y - this.size - 6); 
+        ctx.restore();
+    }
+    checkCollision() {
+        let dx = plane.x - this.x;
+        let dy = plane.y - this.y;
+        let radiusSum = this.size + plane.width * 0.35;
+        return (dx * dx + dy * dy) < (radiusSum * radiusSum);
+    }
+}
+
+const handleMove = (clientX, clientY) => {
+    if (isGameOver) return;
+    const rect = canvas.getBoundingClientRect();
+    plane.targetX = clientX - rect.left;
+    plane.targetY = Math.max(logicalHeight - 180, Math.min(logicalHeight - 40, clientY - rect.top));
+};
+
+canvas.addEventListener('mousemove', (e) => handleMove(e.clientX, e.clientY));
+canvas.addEventListener('mousedown', () => { if (!isGameOver) { initAudio(); isPressing = true; } });
+window.addEventListener('mouseup', () => { isPressing = false; });
+
+canvas.addEventListener('touchmove', (e) => {
+    e.preventDefault();
+    handleMove(e.touches[0].clientX, e.touches[0].clientY);
+}, {passive: false});
+
+canvas.addEventListener('touchstart', (e) => { 
+    e.preventDefault();
+    if (!isGameOver) { initAudio(); isPressing = true; handleMove(e.touches[0].clientX, e.touches[0].clientY); } 
+}, {passive: false});
+
+window.addEventListener('touchend', () => { isPressing = false; });
+
+function spawnObstacles() {
+    if (isGameOver) return;
+    if (Math.random() < 0.015 + (gameLevel * 0.001)) { obstacles.push(new Obstacle()); }
+}
+
+function updateHighScore() {
+    if (score > highScore) { highScore = score; highscoreEl.innerText = highScore; }
+}
+
+function triggerGameOver() {
+    isPressing = false; isGameOver = true;
+    updateHighScore(); gameOverScreen.style.display = 'flex';
+}
+
+function resetGame() {
+    updateHighScore();
+    obstacles = []; lasers = []; score = 0; gameLevel = 1; isPressing = false; speed = START_SPEED;
+    scoreEl.innerText = score; lvlEl.innerText = gameLevel; weaponEl.innerText = "BLASTER x1";
+    isGameOver = false; gameOverScreen.style.display = 'none';
+    plane.x = logicalWidth / 2;
+    plane.targetX = logicalWidth / 2;
+    requestAnimationFrame(gameLoop);
+}
+
+function drawPlane() {
+    let prevX = plane.x; 
+    plane.x += (plane.targetX - plane.x) * 0.18; 
+    plane.y += (plane.targetY - plane.y) * 0.18;
+    plane.x = Math.max(25, Math.min(logicalWidth - 25, plane.x));
+    
+    ctx.save(); ctx.translate(plane.x, plane.y);
+    let targetRotation = (plane.x - prevX) * 0.08; 
+    plane.rotation += (targetRotation - plane.rotation) * 0.2;
+    ctx.rotate(Math.max(-0.4, Math.min(0.4, plane.rotation)));
+    
+    ctx.fillStyle = '#dcdce6';
+    ctx.beginPath(); ctx.moveTo(0, -20); ctx.lineTo(4, -6); ctx.lineTo(22, 12); ctx.lineTo(16, 12); ctx.lineTo(4, 4); ctx.lineTo(0, 12); ctx.lineTo(-4, 4); ctx.lineTo(-16, 12); ctx.lineTo(-22, 12); ctx.lineTo(-4, -6); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#00e1ff'; ctx.fillRect(-5, 8, 2, 3 + Math.random() * 4); ctx.fillRect(3, 8, 2, 3 + Math.random() * 4); 
+    ctx.restore();
+}
+
+function gameLoop() {
+    if (isGameOver) return; 
+    ctx.fillStyle = '#02030a';
+    ctx.fillRect(0, 0, logicalWidth, logicalHeight);
+    
+    ctx.fillStyle = '#ffffff';
+    spaceStars.forEach(star => {
+        star.y += star.speed * (speed * 0.8); if (star.y > logicalHeight) { star.y = 0; star.x = Math.random() * logicalWidth; }
+        ctx.fillRect(star.x, star.y, star.size, star.size);
+    });
+    
+    if (fireCooldown > 0) fireCooldown--;
+    if (isPressing && fireCooldown <= 0) {
+        if (gameLevel === 1) { lasers.push(new Laser(plane.x, plane.y)); } 
+        else if (gameLevel === 2) { lasers.push(new Laser(plane.x - 14, plane.y)); lasers.push(new Laser(plane.x + 14, plane.y)); } 
+        else { lasers.push(new Laser(plane.x, plane.y - 5)); lasers.push(new Laser(plane.x - 18, plane.y)); lasers.push(new Laser(plane.x + 18, plane.y)); }
+        playLaserSound(); fireCooldown = maxCooldown;
+    }
+    
+    for (let l = lasers.length - 1; l >= 0; l--) {
+        lasers[l].update(); lasers[l].draw(); 
+        if (lasers[l].y < -10) { lasers.splice(l, 1); continue; }
+        
+        for (let o = obstacles.length - 1; o >= 0; o--) {
+            let obs = obstacles[o]; 
+            let dx = lasers[l].x - obs.x;
+            let dy = lasers[l].y - obs.y;
+            if ((dx * dx + dy * dy) < ((obs.size + 4) * (obs.size + 4))) {
+                obs.hp--; playHitSound(); lasers.splice(l, 1);
+                if (obs.hp <= 0) { obstacles.splice(o, 1); score += 25; scoreEl.innerText = score; }
+                break;
+            }
+        }
+    }
+    
+    for (let i = obstacles.length - 1; i >= 0; i--) {
+        obstacles[i].update(); obstacles[i].draw();
+        if (obstacles[i].checkCollision()) { triggerGameOver(); return; }
+        if (obstacles[i].y > logicalHeight + 60) { obstacles.splice(i, 1); score += 10; scoreEl.innerText = score; }
+    }
+    
+    let targetLevel = 1 + Math.floor(score / 500);
+    if (targetLevel > gameLevel) {
+        gameLevel = targetLevel; lvlEl.innerText = gameLevel;
+        if (gameLevel === 1) weaponEl.innerText = "BLASTER x1";
+        else if (gameLevel === 2) weaponEl.innerText = "BLASTER x2";
+        else weaponEl.innerText = "HYPER-CHARGE x3";
+        playLevelUpSound(); speed += 0.15; 
+    }
+    
+    spawnObstacles(); 
+    drawPlane(); 
+    requestAnimationFrame(gameLoop);
+}
+
+window.addEventListener('load', () => {
+    requestAnimationFrame(gameLoop);
+});
+</script>
+</body>
+</html>
